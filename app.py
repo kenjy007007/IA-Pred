@@ -2,19 +2,21 @@ import streamlit as st
 import pandas as pd
 import joblib
 
-# --- 1. CHARGEMENT ---
+# --- 1. CHARGEMENT SÉCURISÉ ---
 try:
     bundle = joblib.load('bundle_final.pkl')
     model = bundle['model']
     scaler = bundle['scaler']
     encoders = bundle['encoders']
+    # On récupère l'ordre exact des colonnes utilisé à l'entraînement
+    feature_names = bundle['feature_names']
 except Exception as e:
-    st.error(f"Erreur de chargement du fichier bundle_final.pkl : {e}")
+    st.error(f"Erreur : Impossible de charger le bundle. Vérifiez le fichier .pkl. {e}")
 
 st.title("💰 Prédicteur de Salaire Professionnel")
 
-# --- 2. SAISIE DES DONNÉES ---
-# On utilise directement les classes de l'encodeur pour éviter les "unseen labels"
+# --- 2. WIDGETS DE SAISIE ---
+# On utilise directement les classes des encodeurs pour être 100% sûr des labels
 job_title = st.selectbox("Métier", options=list(encoders['job_title'].classes_))
 experience_years = st.number_input("Années d'expérience", min_value=0, value=5)
 education_level = st.selectbox("Niveau d'études", options=list(encoders['education_level'].classes_))
@@ -25,8 +27,9 @@ location = st.selectbox("Localisation", options=list(encoders['location'].classe
 remote_work = st.selectbox("Télétravail", options=[0, 1], format_func=lambda x: "Oui" if x==1 else "Non")
 certifications = st.number_input("Certifications", min_value=0, value=2)
 
-# --- 3. CONSTRUCTION & LOI DE 30 ---
-input_row = {
+# --- 3. PRÉPARATION ET LOI DE 30 ---
+# On crée le dictionnaire avec les noms EXACTS de ton dataset
+input_data = {
     'job_title': job_title,
     'experience_years': experience_years,
     'education_level': education_level,
@@ -38,30 +41,33 @@ input_row = {
     'certifications': certifications
 }
 
+# Application de ta loi de saturation
 LIMITE = 30
-if input_row['experience_years'] > LIMITE or input_row['skills_count'] > LIMITE or input_row['certifications'] > LIMITE:
-    st.warning(f"⚠️ Valeurs plafonnées à {LIMITE} pour la précision.")
+if any(input_data[k] > LIMITE for k in ['experience_years', 'skills_count', 'certifications']):
+    st.warning(f"⚠️ Note : Valeurs plafonnées à {LIMITE} pour garantir la stabilité.")
+    input_data['experience_years'] = min(input_data['experience_years'], LIMITE)
+    input_data['skills_count'] = min(input_data['skills_count'], LIMITE)
+    input_data['certifications'] = min(input_data['certifications'], LIMITE)
 
-input_row['experience_years'] = min(input_row['experience_years'], LIMITE)
-input_row['skills_count'] = min(input_row['skills_count'], LIMITE)
-input_row['certifications'] = min(input_row['certifications'], LIMITE)
-
-# --- 4. PRÉDICTION SÉCURISÉE ---
+# --- 4. LOGIQUE DE PRÉDICTION ---
 if st.button("Estimer le salaire"):
     try:
-        df_pred = pd.DataFrame([input_row])
-        
-        # Encodage avec gestion d'erreur
+        # ÉTAPE A : Créer le DataFrame et FORCER l'ordre des colonnes
+        df_pred = pd.DataFrame([input_data])
+        df_pred = df_pred[feature_names] # <--- C'est ça qui règle souvent les erreurs !
+
+        # ÉTAPE B : Encodage des textes
         for col, enc in encoders.items():
-            df_pred[col] = enc.transform(df_pred[col])
+            df_pred[col] = enc.transform(df_pred[col].astype(str))
             
+        # ÉTAPE C : Scaling et Prédiction
         final_data = scaler.transform(df_pred)
         prediction = model.predict(final_data)
         
         st.success(f"### Salaire estimé : {prediction[0]:,.2f} €")
-        
+
     except ValueError as e:
-        st.error("❌ Erreur de données : Une des valeurs choisies n'est pas reconnue par l'IA.")
-        st.info("Conseil : Assurez-vous d'utiliser les options proposées dans les listes.")
+        st.error(f"❌ Erreur de correspondance : {e}")
+        st.info("L'IA n'a pas reconnu une des catégories choisies.")
     except Exception as e:
-        st.error(f"❌ Une erreur imprévue est survenue : {e}")
+        st.error(f"❌ Une erreur est survenue : {e}")
