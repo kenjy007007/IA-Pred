@@ -1,83 +1,68 @@
 import streamlit as st
 import pandas as pd
-import joblib
+import joblib  # Utilisation standard de joblib
 
-# --- 1. CONFIGURATION & CHARGEMENT ---
-st.set_page_config(page_title="IA Salaire", layout="centered")
+# Configuration visuelle
+st.set_page_config(page_title="IA Salaire Predictor", layout="centered")
 
-try:
-    # On charge le bundle qui contient TOUT (modèle, scaler, encoders, noms des colonnes)
-    bundle = joblib.load('bundle_final.pkl')
-    model = bundle['model']
-    scaler = bundle['scaler']
-    encoders = bundle['encoders']
-    feature_names = bundle['feature_names']
-except Exception as e:
-    st.error(f"Erreur de chargement du fichier .pkl : {e}")
-    st.stop() # Arrête l'application si le fichier est introuvable
+# Chargement du pack (Modèle + Scaler + Encoders)
+@st.cache_resource
+def load_all():
+    return joblib.load('bundle_final.pkl')
 
-st.title("💰 Prédicteur de Salaire Professionnel")
-st.write("Remplissez les informations ci-dessous pour obtenir une estimation.")
+data = load_all()
+model = data['model']
+scaler = data['scaler']
+encoders = data['encoders']
+features = data['feature_names']
 
-# --- 2. CRÉATION DES WIDGETS (Saisie) ---
-# On utilise les .classes_ pour être sûr que l'IA connaisse les mots choisis
-job_title = st.selectbox("Métier", options=list(encoders['job_title'].classes_))
-experience_years = st.number_input("Années d'expérience", min_value=0, max_value=50, value=5)
-education_level = st.selectbox("Niveau d'études", options=list(encoders['education_level'].classes_))
-skills_count = st.number_input("Nombre de compétences", min_value=0, max_value=100, value=10)
-industry = st.selectbox("Secteur d'activité", options=list(encoders['industry'].classes_))
-company_size = st.selectbox("Taille de l'entreprise", options=list(encoders['company_size'].classes_))
-location = st.selectbox("Localisation (Ville)", options=list(encoders['location'].classes_))
-remote_work = st.selectbox("Télétravail", options=[0, 1], format_func=lambda x: "Oui" if x==1 else "Non")
-certifications = st.number_input("Nombre de certifications", min_value=0, max_value=50, value=2)
+st.title("💰 Prédiction de Salaire par Intelligence Artificielle")
+st.write("Ce modèle utilise un Réseau de Neurones Artificiels entraîné sur 250 000 données.")
 
-# --- 3. CONSTRUCTION DU DICTIONNAIRE ---
-# On crée l'objet AVANT de lui appliquer la loi
-input_row = {
-    'job_title': job_title,
-    'experience_years': experience_years,
-    'education_level': education_level,
-    'skills_count': skills_count,
-    'industry': industry,
-    'company_size': company_size,
-    'location': location,
-    'remote_work': remote_work,
-    'certifications': certifications
-}
-
-# --- 4. LA LOI DE 30 (SÉCURITÉ) ---
-LIMITE = 30
-
-# Vérification pour l'affichage du message
-if input_row['experience_years'] > LIMITE or input_row['skills_count'] > LIMITE or input_row['certifications'] > LIMITE:
-    st.warning(f"⚠️ **Note :** Les valeurs sont plafonnées à {LIMITE} pour garantir la précision du modèle.")
-
-# Application technique du plafonnement
-input_row['experience_years'] = min(input_row['experience_years'], LIMITE)
-input_row['skills_count'] = min(input_row['skills_count'], LIMITE)
-input_row['certifications'] = min(input_row['certifications'], LIMITE)
-
-# --- 5. LOGIQUE DE PRÉDICTION ---
-if st.button("Estimer le salaire"):
-    try:
-        # A. Créer le DataFrame
-        df_pred = pd.DataFrame([input_row])
-        
-        # B. Forcer l'ordre des colonnes pour correspondre à l'entraînement
-        df_pred = df_pred[feature_names]
-        
-        # C. Encodage des textes (Label Encoding)
-        for col, enc in encoders.items():
-            df_pred[col] = enc.transform(df_pred[col])
+# Création du formulaire interactif
+with st.form("prediction_form"):
+    st.subheader("Entrez les détails du profil")
+    inputs = {}
+    
+    for col in features:
+        if col in encoders:
+            options = sorted(encoders[col].classes_.tolist())
+            inputs[col] = st.selectbox(f"{col}", options)
+        else:
+            # Saisie numérique pour l'expérience, compétences et certifications
+            inputs[col] = st.number_input(f"{col}", min_value=0, max_value=100, value=5)
             
-        # D. Normalisation (Scaling)
-        final_data = scaler.transform(df_pred)
-        
-        # E. Prédiction finale
-        prediction = model.predict(final_data)
-        
-        # Affichage du résultat avec mise en forme
-        st.success(f"### Salaire estimé : {prediction[0]:,.0f} € / an")
-        
-    except Exception as e:
-        st.error(f"Une erreur est survenue lors du calcul : {e}")
+    submit = st.form_submit_button("Lancer la prédiction")
+
+if submit:
+    # --- LA LOI DE 30 (SÉCURITÉ ET FIABILITÉ) ---
+    LIMITE = 30
+    colonnes_a_limiter = ['experience_years', 'skills_count', 'certifications']
+    
+    # On vérifie si une alerte est nécessaire
+    if any(inputs.get(c, 0) > LIMITE for c in colonnes_a_limiter):
+        st.warning(f"⚠️ **Note de fiabilité :** Pour garantir la précision du modèle, les valeurs supérieures à {LIMITE} sont plafonnées (Loi de saturation).")
+    
+    # On applique le plafonnement technique sur les données d'entrée
+    for c in colonnes_a_limiter:
+        if c in inputs:
+            inputs[c] = min(inputs[c], LIMITE)
+    # ---------------------------------------------
+
+    # Transformation des entrées en DataFrame
+    df_input = pd.DataFrame([inputs])
+    
+    # S'assurer que les colonnes sont dans le bon ordre (celui de features)
+    df_input = df_input[features]
+    
+    # Encodage automatique (Texte -> Nombre)
+    for col in encoders:
+        df_input[col] = encoders[col].transform(df_input[col])
+    
+    # Normalisation et Prédiction
+    input_scaled = scaler.transform(df_input)
+    prediction = model.predict(input_scaled)
+    
+    # Résultat final
+    st.success(f"### Salaire annuel estimé : {prediction[0]:,.2f} €")
+    st.info("Cette estimation est basée sur les tendances du marché analysées par le Data Mining.")
