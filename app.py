@@ -2,34 +2,38 @@ import streamlit as st
 import pandas as pd
 import joblib
 
-# --- 1. CHARGEMENT SÉCURISÉ ---
+# --- 1. CONFIGURATION & CHARGEMENT ---
+st.set_page_config(page_title="IA Salaire", layout="centered")
+
 try:
+    # On charge le bundle qui contient TOUT (modèle, scaler, encoders, noms des colonnes)
     bundle = joblib.load('bundle_final.pkl')
     model = bundle['model']
     scaler = bundle['scaler']
     encoders = bundle['encoders']
-    # On récupère l'ordre exact des colonnes utilisé à l'entraînement
     feature_names = bundle['feature_names']
 except Exception as e:
-    st.error(f"Erreur : Impossible de charger le bundle. Vérifiez le fichier .pkl. {e}")
+    st.error(f"Erreur de chargement du fichier .pkl : {e}")
+    st.stop() # Arrête l'application si le fichier est introuvable
 
 st.title("💰 Prédicteur de Salaire Professionnel")
+st.write("Remplissez les informations ci-dessous pour obtenir une estimation.")
 
-# --- 2. WIDGETS DE SAISIE ---
-# On utilise directement les classes des encodeurs pour être 100% sûr des labels
+# --- 2. CRÉATION DES WIDGETS (Saisie) ---
+# On utilise les .classes_ pour être sûr que l'IA connaisse les mots choisis
 job_title = st.selectbox("Métier", options=list(encoders['job_title'].classes_))
-experience_years = st.number_input("Années d'expérience", min_value=0, value=5)
+experience_years = st.number_input("Années d'expérience", min_value=0, max_value=50, value=5)
 education_level = st.selectbox("Niveau d'études", options=list(encoders['education_level'].classes_))
-skills_count = st.number_input("Nombre de compétences", min_value=0, value=10)
-industry = st.selectbox("Secteur", options=list(encoders['industry'].classes_))
-company_size = st.selectbox("Taille entreprise", options=list(encoders['company_size'].classes_))
-location = st.selectbox("Localisation", options=list(encoders['location'].classes_))
+skills_count = st.number_input("Nombre de compétences", min_value=0, max_value=100, value=10)
+industry = st.selectbox("Secteur d'activité", options=list(encoders['industry'].classes_))
+company_size = st.selectbox("Taille de l'entreprise", options=list(encoders['company_size'].classes_))
+location = st.selectbox("Localisation (Ville)", options=list(encoders['location'].classes_))
 remote_work = st.selectbox("Télétravail", options=[0, 1], format_func=lambda x: "Oui" if x==1 else "Non")
-certifications = st.number_input("Certifications", min_value=0, value=2)
+certifications = st.number_input("Nombre de certifications", min_value=0, max_value=50, value=2)
 
-# --- 3. PRÉPARATION ET LOI DE 30 ---
-# On crée le dictionnaire avec les noms EXACTS de ton dataset
-input_data = {
+# --- 3. CONSTRUCTION DU DICTIONNAIRE ---
+# On crée l'objet AVANT de lui appliquer la loi
+input_row = {
     'job_title': job_title,
     'experience_years': experience_years,
     'education_level': education_level,
@@ -41,33 +45,39 @@ input_data = {
     'certifications': certifications
 }
 
-# Application de ta loi de saturation
+# --- 4. LA LOI DE 30 (SÉCURITÉ) ---
 LIMITE = 30
-if any(input_data[k] > LIMITE for k in ['experience_years', 'skills_count', 'certifications']):
-    st.warning(f"⚠️ Note : Valeurs plafonnées à {LIMITE} pour garantir la stabilité.")
-    input_data['experience_years'] = min(input_data['experience_years'], LIMITE)
-    input_data['skills_count'] = min(input_data['skills_count'], LIMITE)
-    input_data['certifications'] = min(input_data['certifications'], LIMITE)
 
-# --- 4. LOGIQUE DE PRÉDICTION ---
+# Vérification pour l'affichage du message
+if input_row['experience_years'] > LIMITE or input_row['skills_count'] > LIMITE or input_row['certifications'] > LIMITE:
+    st.warning(f"⚠️ **Note :** Les valeurs sont plafonnées à {LIMITE} pour garantir la précision du modèle.")
+
+# Application technique du plafonnement
+input_row['experience_years'] = min(input_row['experience_years'], LIMITE)
+input_row['skills_count'] = min(input_row['skills_count'], LIMITE)
+input_row['certifications'] = min(input_row['certifications'], LIMITE)
+
+# --- 5. LOGIQUE DE PRÉDICTION ---
 if st.button("Estimer le salaire"):
     try:
-        # ÉTAPE A : Créer le DataFrame et FORCER l'ordre des colonnes
-        df_pred = pd.DataFrame([input_data])
-        df_pred = df_pred[feature_names] # <--- C'est ça qui règle souvent les erreurs !
-
-        # ÉTAPE B : Encodage des textes
+        # A. Créer le DataFrame
+        df_pred = pd.DataFrame([input_row])
+        
+        # B. Forcer l'ordre des colonnes pour correspondre à l'entraînement
+        df_pred = df_pred[feature_names]
+        
+        # C. Encodage des textes (Label Encoding)
         for col, enc in encoders.items():
-            df_pred[col] = enc.transform(df_pred[col].astype(str))
+            df_pred[col] = enc.transform(df_pred[col])
             
-        # ÉTAPE C : Scaling et Prédiction
+        # D. Normalisation (Scaling)
         final_data = scaler.transform(df_pred)
+        
+        # E. Prédiction finale
         prediction = model.predict(final_data)
         
-        st.success(f"### Salaire estimé : {prediction[0]:,.2f} €")
-
-    except ValueError as e:
-        st.error(f"❌ Erreur de correspondance : {e}")
-        st.info("L'IA n'a pas reconnu une des catégories choisies.")
+        # Affichage du résultat avec mise en forme
+        st.success(f"### Salaire estimé : {prediction[0]:,.0f} € / an")
+        
     except Exception as e:
-        st.error(f"❌ Une erreur est survenue : {e}")
+        st.error(f"Une erreur est survenue lors du calcul : {e}")
