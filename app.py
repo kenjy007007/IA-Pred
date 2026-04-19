@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
-import joblib
+from sklearn.utils import _joblib as joblib
+import sklearn
 
 # Configuration visuelle
 st.set_page_config(page_title="IA Salaire Predictor", layout="centered")
