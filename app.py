@@ -1,3 +1,8 @@
+import streamlit as st
+import pandas as pd
+import joblib
+
+
 # --- 1. COLLECTE DES DONNÉES (Widgets Streamlit) ---
 # Assure-toi que ces noms correspondent à tes widgets
 job_title = st.selectbox("Métier", options=encoders['job_title'].classes_)
